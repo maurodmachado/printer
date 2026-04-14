@@ -16,8 +16,9 @@ const app = express()
 const PORT = Number(process.env.PORT || 4100)
 const PRINTER_ROUTE = process.env.PRINTER_ROUTE || '/print-ticket'
 const PRINTER_NAME = (process.env.PRINTER_NAME || '').trim()
+const PRINTER_SHARE_PATH = (process.env.PRINTER_SHARE_PATH || '').trim()
 const PRINTER_API_KEY = (process.env.PRINTER_API_KEY || '').trim()
-const PAPER_WIDTH = Math.max(24, Number(process.env.PAPER_WIDTH || 48))
+const PAPER_WIDTH = Math.max(24, Number(process.env.PAPER_WIDTH || 32))
 const KEEP_TMP_FILES = String(process.env.KEEP_TMP_FILES || 'false').toLowerCase() === 'true'
 const DRY_RUN = String(process.env.DRY_RUN || 'false').toLowerCase() === 'true'
 const ALLOWED_ORIGIN = process.env.ALLOWED_ORIGIN || '*'
@@ -144,60 +145,19 @@ function itemLines(item, width) {
   return lines
 }
 
-function buildTicketText(ticket) {
+function buildTicketText() {
   const lines = []
-  const separator = '-'.repeat(PAPER_WIDTH)
-  const createdAtLabel = ticket.createdAt
-    ? new Date(ticket.createdAt).toLocaleString('es-AR')
-    : new Date().toLocaleString('es-AR')
 
   // ESC/POS commands: \x1b@ = reset, \x1da1 = center align, \x1da0 = left align, \x1d!1 = double height/width font
   lines.push('\x1b@') // Reset printer
+  lines.push(`\x1dW${String.fromCharCode(PAPER_WIDTH)}`) // Set print area width
   lines.push('\x1da1') // Center align
-  lines.push(center('🛸 CÓSMICO 🛸', PAPER_WIDTH))
-  lines.push(separator)
-  lines.push('')
-  lines.push('\x1d!1') // Double height/width font for order number
-  lines.push(`ORDEN #${ticket.number ?? ''}`)
+  lines.push('\x1d!1') // Double height/width font
+  lines.push(center('COSMICO', PAPER_WIDTH))
   lines.push('\x1d!0') // Normal font
   lines.push('')
   lines.push('\x1da0') // Left align
-  lines.push(separator)
-  lines.push(`Fecha: ${createdAtLabel}`)
-  lines.push(separator)
-
-  const items = Array.isArray(ticket.items) ? ticket.items : []
-  for (const item of items) {
-    lines.push(...itemLines(item, PAPER_WIDTH))
-  }
-
-  lines.push(separator)
-
-  const payments = Array.isArray(ticket.paymentBreakdown) ? ticket.paymentBreakdown : []
-  if (payments.length > 0) {
-    for (const payment of payments) {
-      const method = String(payment.method || 'otro')
-      const amount = formatMoney(payment.amount)
-      lines.push(`Pago: ${method} - ${amount}`)
-    }
-  }
-  lines.push(separator)
-  lines.push(`TOTAL: ${formatMoney(ticket.total)}`)
-  lines.push(separator)
-
-  if (ticket.note) {
-    lines.push(`Nota: ${ticket.note}`)
-    lines.push(separator)
-  }
-
   lines.push('')
-  lines.push('\x1da1') // Center align
-  lines.push(center('Sabores de otra galaxia', PAPER_WIDTH))
-  lines.push('')
-  lines.push(center('Ticket no valido como factura', PAPER_WIDTH - 12))
-  lines.push('')
-  lines.push('')
-  lines.push('\x1da0') // Left align for cut
   lines.push('\x1dV1') // Full cut
 
   return lines.join('\n')
@@ -211,6 +171,27 @@ async function ensureTmpDir() {
 
 async function printFile(filePath) {
   if (process.platform === 'win32') {
+    const printerShare = PRINTER_SHARE_PATH
+    if (printerShare) {
+      try {
+        logInfo('Intentando imprimir en Windows via printer share', {
+          filePath,
+          printerShare,
+        })
+        await execFileAsync('cmd', ['/c', `copy /b "${filePath}" "${printerShare}"`])
+        logInfo('Impresion OK via printer share', {
+          filePath,
+          printerShare,
+        })
+        return
+      } catch (shareError) {
+        logInfo('Fallo al imprimir via printer share, continuando con fallback', {
+          error: shareError?.message || String(shareError),
+          printerShare,
+        })
+      }
+    }
+
     try {
       const notepadArgs = PRINTER_NAME ? ['/pt', filePath, PRINTER_NAME] : ['/p', filePath]
       logInfo('Intentando imprimir con notepad', {
