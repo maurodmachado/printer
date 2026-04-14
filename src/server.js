@@ -150,8 +150,11 @@ function itemLines(item, width) {
 }
 
 function buildTicketText(ticket) {
-  const lines = []
-
+ const lines = []
+  const separator = '-'.repeat(PAPER_WIDTH)
+  const createdAtLabel = ticket.createdAt
+    ? new Date(ticket.createdAt).toLocaleString('es-AR')
+    : new Date().toLocaleString('es-AR')
   lines.push(center('🛸 CÓSMICO 🛸', PAPER_WIDTH))
   lines.push(separator)
   lines.push('')
