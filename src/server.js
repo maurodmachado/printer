@@ -219,7 +219,7 @@ async function printFile(filePath) {
         return
       }
 
-      const args = PRINTER_NAME ? ['/c', 'print', `/D:${PRINTER_NAME}`, filePath] : ['/c', 'print', filePath]
+      const args = PRINTER_NAME ? ['/c', 'print', `/D:${PRINTER_NAME}`, `"${filePath}"`] : ['/c', 'print', `"${filePath}"`]
       logInfo('Intentando impresion con PRINT de cmd', {
         filePath,
         printerName: PRINTER_NAME || '(default)',
@@ -258,14 +258,34 @@ async function printFile(filePath) {
 
   try {
     const args = PRINTER_NAME ? ['-d', PRINTER_NAME, filePath] : [filePath]
+    logInfo('Intentando impresion con lp en macOS/Linux', {
+      filePath,
+      printerName: PRINTER_NAME || '(default)',
+    })
     await execFileAsync('lp', args)
+    logInfo('Impresion OK via lp', {
+      filePath,
+      printerName: PRINTER_NAME || '(default)',
+    })
   } catch (error) {
     if (error?.code !== 'ENOENT') {
+      logError('Fallo impresion con lp', error, {
+        filePath,
+        printerName: PRINTER_NAME || '(default)',
+      })
       throw error
     }
 
     const args = PRINTER_NAME ? ['-P', PRINTER_NAME, filePath] : [filePath]
+    logInfo('Fallback a lpr', {
+      filePath,
+      printerName: PRINTER_NAME || '(default)',
+    })
     await execFileAsync('lpr', args)
+    logInfo('Impresion OK via lpr', {
+      filePath,
+      printerName: PRINTER_NAME || '(default)',
+    })
   }
 }
 
@@ -283,17 +303,45 @@ function assertPayload(payload) {
   }
 }
 
-async function listWindowsPrinters() {
-  if (process.platform !== 'win32') {
-    return []
+async function listPrinters() {
+  if (process.platform === 'win32') {
+    const script = 'Get-Printer | Select-Object -ExpandProperty Name'
+    const { stdout } = await execFileAsync('powershell', ['-NoProfile', '-Command', script])
+    return String(stdout)
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean)
   }
 
-  const script = 'Get-Printer | Select-Object -ExpandProperty Name'
-  const { stdout } = await execFileAsync('powershell', ['-NoProfile', '-Command', script])
-  return String(stdout)
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter(Boolean)
+  if (process.platform === 'darwin') {
+    try {
+      const { stdout } = await execFileAsync('lpstat', ['-p'])
+      return String(stdout)
+        .split(/\n/)
+        .map((line) => {
+          const match = line.match(/^printer (.+?) is/)
+          return match ? match[1] : null
+        })
+        .filter(Boolean)
+    } catch {
+      // Fallback o vacío si lpstat falla
+      return []
+    }
+  }
+
+  // Para otros sistemas (linux), intentar lpstat o cups
+  try {
+    const { stdout } = await execFileAsync('lpstat', ['-p'])
+    return String(stdout)
+      .split(/\n/)
+      .map((line) => {
+        const match = line.match(/^printer (.+?) is/)
+        return match ? match[1] : null
+      })
+      .filter(Boolean)
+  } catch {
+    return []
+  }
 }
 
 app.get('/health', (_req, res) => {
@@ -315,7 +363,7 @@ app.get('/health', (_req, res) => {
 
 app.get('/printers', async (_req, res) => {
   try {
-    const printers = await listWindowsPrinters()
+    const printers = await listPrinters()
     logInfo('Listado de impresoras obtenido', {
       count: printers.length,
       printers,
