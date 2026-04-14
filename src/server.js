@@ -152,11 +152,13 @@ function buildTicketText(ticket) {
     ? new Date(ticket.createdAt).toLocaleString('es-AR')
     : new Date().toLocaleString('es-AR')
 
-  lines.push(center('COSMICO', PAPER_WIDTH))
+  lines.push(center('🛸 CÓSMICO 🛸', PAPER_WIDTH))
   lines.push(separator)
-  lines.push(`Ticket #${ticket.number ?? ''}`)
+  lines.push('')
+  lines.push(center(`ORDEN #${ticket.number ?? ''}`, PAPER_WIDTH))
+  lines.push('')
+  lines.push(separator)
   lines.push(`Fecha: ${createdAtLabel}`)
-  if (ticket.status) lines.push(`Estado: ${ticket.status}`)
   lines.push(separator)
 
   const items = Array.isArray(ticket.items) ? ticket.items : []
@@ -168,23 +170,26 @@ function buildTicketText(ticket) {
 
   const payments = Array.isArray(ticket.paymentBreakdown) ? ticket.paymentBreakdown : []
   if (payments.length > 0) {
-    lines.push('Pago:')
     for (const payment of payments) {
       const method = String(payment.method || 'otro')
-      lines.push(...wrapText(`- ${method}: ${formatMoney(payment.amount)}`, PAPER_WIDTH))
+      const amount = formatMoney(payment.amount)
+      lines.push(...wrapText(`Pago: ${method} - ${amount}`, PAPER_WIDTH))
     }
   }
 
+  lines.push(separator)
   lines.push(`TOTAL: ${formatMoney(ticket.total)}`)
+  lines.push(separator)
 
   if (ticket.note) {
-    lines.push(separator)
     lines.push(...wrapText(`Nota: ${ticket.note}`, PAPER_WIDTH))
+    lines.push(separator)
   }
 
   lines.push('')
-  lines.push(center('Gracias por tu compra', PAPER_WIDTH))
+  lines.push(center('Sabores de otra galaxia', PAPER_WIDTH))
   lines.push('')
+  lines.push(center('Ticket no valido como factura', PAPER_WIDTH - 12))
   lines.push('')
   lines.push('')
 
