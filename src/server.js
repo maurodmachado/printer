@@ -152,15 +152,45 @@ function itemLines(item, width) {
 function buildTicketText(ticket) {
   const lines = []
 
-  // Temporarily reduce ticket content for quick testing.
-  // Once this test works, restore the full ticket layout below.
-  lines.push('\x1b@') // Reset printer
-  lines.push('\x1da1') // Center align
-  lines.push(center('COSMICO', PAPER_WIDTH))
-  lines.push('\x1da0') // Left align for cut
-  lines.push('\x1dV1') // Full cut
+  lines.push(center('🛸 CÓSMICO 🛸', PAPER_WIDTH))
+  lines.push(separator)
+  lines.push('')
+  lines.push(center(`ORDEN #${ticket.number ?? ''}`, PAPER_WIDTH))
+  lines.push('')
+  lines.push(separator)
+  lines.push(`Fecha: ${createdAtLabel}`)
+const items = Array.isArray(ticket.items) ? ticket.items : []
+  for (const item of items) {
+    lines.push(...itemLines(item, PAPER_WIDTH))
+  }
 
-  return lines.join('\n')
+  lines.push(separator)
+
+  const payments = Array.isArray(ticket.paymentBreakdown) ? ticket.paymentBreakdown : []
+  if (payments.length > 0) {
+    for (const payment of payments) {
+      const method = String(payment.method || 'otro')
+      const amount = formatMoney(payment.amount)
+      lines.push(...wrapText(`Pago: ${method} - ${amount}`, PAPER_WIDTH))
+    }
+  }
+lines.push(separator)
+lines.push(`TOTAL: ${formatMoney(ticket.total)}`)
+  lines.push(separator)
+
+  if (ticket.note) {
+    lines.push(...wrapText(`Nota: ${ticket.note}`, PAPER_WIDTH))
+    lines.push(separator)
+  }
+
+  lines.push('')
+  lines.push(center('Sabores de otra galaxia', PAPER_WIDTH))
+  lines.push('')
+  lines.push(center('Ticket no valido como factura', PAPER_WIDTH - 12))
+  lines.push('')
+  lines.push('')
+
+  return `${lines.join('\n')}\n`
 }
 
 async function ensureTmpDir() {
