@@ -117,14 +117,22 @@ async function ensureTmpDir() {
 
 async function printFile(filePath) {
   if (process.platform === 'win32') {
-    const printerArg = PRINTER_NAME.replace(/'/g, "''")
-    const fileArg = filePath.replace(/'/g, "''")
-    const command = PRINTER_NAME
-      ? `$c = Get-Content -Path '${fileArg}'; $c | Out-Printer -Name '${printerArg}'`
-      : `$c = Get-Content -Path '${fileArg}'; $c | Out-Printer`
-
-    await execFileAsync('powershell', ['-NoProfile', '-Command', command])
-    return
+    try {
+      const args = PRINTER_NAME ? ['/c', 'print', `/D:${PRINTER_NAME}`, filePath] : ['/c', 'print', filePath]
+      await execFileAsync('cmd', args)
+      return
+    } catch (cmdError) {
+      // Fallback estable para TXT en Windows sin usar Out-Printer.
+      try {
+        const notepadArgs = PRINTER_NAME ? ['/pt', filePath, PRINTER_NAME] : ['/p', filePath]
+        await execFileAsync('notepad', notepadArgs)
+        return
+      } catch (notepadError) {
+        const cmdMessage = cmdError?.stderr || cmdError?.message || 'PRINT failed'
+        const notepadMessage = notepadError?.stderr || notepadError?.message || 'NOTEPAD print failed'
+        throw new Error(`Windows print failed. PRINT: ${cmdMessage}. NOTEPAD: ${notepadMessage}`)
+      }
+    }
   }
 
   try {
