@@ -148,14 +148,14 @@ function itemLines(item, width) {
 function buildTicketText() {
   const lines = []
 
-  // ESC/POS commands: \x1b@ = reset, \x1da1 = center align, \x1dV1 = full cut
+  // ESC/POS commands: \x1b@ = reset, \x1ba1 = center align, \x1ba0 = left align, \x1dV1 = full cut
   lines.push('\x1b@') // Reset printer
-  lines.push('\x1da1') // Center align
-  lines.push(center('COSMICO', PAPER_WIDTH))
-  lines.push('')
+  lines.push('\x1ba1') // Center align
+  lines.push('COSMICO')
+  lines.push('\x1ba0') // Left align
   lines.push('\x1dV1') // Full cut
 
-  return lines.join('\r\n')
+  return lines.join('\n')
 }
 
 async function ensureTmpDir() {
@@ -169,21 +169,35 @@ async function printFile(filePath) {
     const printerShare = PRINTER_SHARE_PATH
     if (printerShare) {
       try {
-        logInfo('Intentando imprimir en Windows via printer share', {
+        logInfo('Intentando imprimir en Windows via printer share (raw write)', {
           filePath,
           printerShare,
         })
-        await execFileAsync('cmd', ['/c', `copy /b "${filePath}" "${printerShare}"`])
-        logInfo('Impresion OK via printer share', {
+        const rawData = await fs.readFile(filePath)
+        await fs.writeFile(printerShare, rawData)
+        logInfo('Impresion OK via printer share (raw write)', {
           filePath,
           printerShare,
         })
         return
       } catch (shareError) {
-        logInfo('Fallo al imprimir via printer share, continuando con fallback', {
+        logInfo('Fallo al imprimir via printer share directo, intentando fallback copy /b', {
           error: shareError?.message || String(shareError),
           printerShare,
         })
+        try {
+          await execFileAsync('cmd', ['/c', `copy /b "${filePath}" "${printerShare}"`])
+          logInfo('Impresion OK via printer share (copy /b)', {
+            filePath,
+            printerShare,
+          })
+          return
+        } catch (copyError) {
+          logInfo('Fallo al imprimir via printer share copy /b, continuando con fallback', {
+            error: copyError?.message || String(copyError),
+            printerShare,
+          })
+        }
       }
     }
 
