@@ -245,14 +245,14 @@ async function printFile(filePath) {
   }
 
   try {
-    const args = PRINTER_NAME ? ['-d', PRINTER_NAME, filePath] : [filePath]
+    const args = PRINTER_NAME ? ['-d', PRINTER_NAME, '-o', 'raw', filePath] : ['-o', 'raw', filePath]
     await execFileAsync('lp', args)
   } catch (error) {
     if (error?.code !== 'ENOENT') {
       throw error
     }
 
-    const args = PRINTER_NAME ? ['-P', PRINTER_NAME, filePath] : [filePath]
+    const args = PRINTER_NAME ? ['-P', PRINTER_NAME, '-o', 'raw', filePath] : ['-o', 'raw', filePath]
     await execFileAsync('lpr', args)
   }
 }
