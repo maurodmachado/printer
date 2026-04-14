@@ -16,12 +16,25 @@ const app = express()
 const PORT = Number(process.env.PORT || 4100)
 const PRINTER_ROUTE = process.env.PRINTER_ROUTE || '/print-ticket'
 const PRINTER_NAME = (process.env.PRINTER_NAME || '').trim()
-const PRINTER_SHARE_PATH = (process.env.PRINTER_SHARE_PATH || '').trim()
+const PRINTER_SHARE_PATH = normalizeEnvValue(process.env.PRINTER_SHARE_PATH)
 const PRINTER_API_KEY = (process.env.PRINTER_API_KEY || '').trim()
 const PAPER_WIDTH = Math.max(24, Number(process.env.PAPER_WIDTH || 32))
 const KEEP_TMP_FILES = String(process.env.KEEP_TMP_FILES || 'false').toLowerCase() === 'true'
 const DRY_RUN = String(process.env.DRY_RUN || 'false').toLowerCase() === 'true'
 const ALLOWED_ORIGIN = process.env.ALLOWED_ORIGIN || '*'
+
+function normalizeEnvValue(value) {
+  if (typeof value !== 'string') {
+    return ''
+  }
+
+  let cleaned = value.trim()
+  if ((cleaned.startsWith('"') && cleaned.endsWith('"')) || (cleaned.startsWith("'") && cleaned.endsWith("'"))) {
+    cleaned = cleaned.slice(1, -1).trim()
+  }
+
+  return cleaned
+}
 
 function logInfo(message, meta = {}) {
   const timestamp = new Date().toISOString()
@@ -146,16 +159,10 @@ function itemLines(item, width) {
 }
 
 function buildTicketText() {
-  const lines = []
-
-  // ESC/POS commands: \x1b@ = reset, \x1ba1 = center align, \x1ba0 = left align, \x1dV1 = full cut
-  lines.push('\x1b@') // Reset printer
-  lines.push('\x1ba1') // Center align
-  lines.push('COSMICO')
-  lines.push('\x1ba0') // Left align
-  lines.push('\x1dV1') // Full cut
-
-  return lines.join('\n')
+  // Texto mínimo para validación: solo COSMICO
+  // Se centra usando espacios ASCII para evitar comandos ESC/POS.
+  const centered = center('COSMICO', PAPER_WIDTH)
+  return Buffer.from(`${centered}\r\n`, 'ascii')
 }
 
 async function ensureTmpDir() {
@@ -329,10 +336,10 @@ app.post(PRINTER_ROUTE, async (req, res) => {
     const ticket = req.body.ticket
     const text = buildTicketText(ticket)
     const tmpDir = await ensureTmpDir()
-    const fileName = `ticket-${ticket.number || 'na'}-${randomUUID()}.txt`
+    const fileName = `ticket-${ticket.number || 'na'}-${randomUUID()}.bin`
     const filePath = path.join(tmpDir, fileName)
 
-    await fs.writeFile(filePath, text, 'utf8')
+    await fs.writeFile(filePath, text)
     logInfo('Ticket serializado en archivo temporal', {
       requestId: req.requestId,
       filePath,
