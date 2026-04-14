@@ -17,7 +17,7 @@ const PORT = Number(process.env.PORT || 4100)
 const PRINTER_ROUTE = process.env.PRINTER_ROUTE || '/print-ticket'
 const PRINTER_NAME = (process.env.PRINTER_NAME || '').trim()
 const PRINTER_API_KEY = (process.env.PRINTER_API_KEY || '').trim()
-const PAPER_WIDTH = Math.max(30, Number(process.env.PAPER_WIDTH || 42))
+const PAPER_WIDTH = Math.max(24, Number(process.env.PAPER_WIDTH || 32))
 const KEEP_TMP_FILES = String(process.env.KEEP_TMP_FILES || 'false').toLowerCase() === 'true'
 const DRY_RUN = String(process.env.DRY_RUN || 'false').toLowerCase() === 'true'
 const ALLOWED_ORIGIN = process.env.ALLOWED_ORIGIN || '*'
@@ -65,11 +65,51 @@ function center(text, width) {
   return `${' '.repeat(left)}${clean}`
 }
 
-function clampLine(text, width) {
-  const value = String(text || '')
-  if (value.length <= width) return value
-  if (width <= 3) return value.slice(0, width)
-  return `${value.slice(0, width - 3)}...`
+function splitToken(token, width) {
+  if (token.length <= width) {
+    return [token]
+  }
+
+  const chunks = []
+  for (let i = 0; i < token.length; i += width) {
+    chunks.push(token.slice(i, i + width))
+  }
+  return chunks
+}
+
+function wrapText(text, width) {
+  const raw = String(text ?? '').trim()
+  if (!raw) {
+    return ['']
+  }
+
+  const tokens = raw
+    .split(/\s+/)
+    .flatMap((token) => splitToken(token, width))
+
+  const lines = []
+  let current = ''
+
+  for (const token of tokens) {
+    if (!current) {
+      current = token
+      continue
+    }
+
+    if (`${current} ${token}`.length <= width) {
+      current = `${current} ${token}`
+      continue
+    }
+
+    lines.push(current)
+    current = token
+  }
+
+  if (current) {
+    lines.push(current)
+  }
+
+  return lines.length > 0 ? lines : ['']
 }
 
 function padRight(text, width) {
@@ -78,33 +118,49 @@ function padRight(text, width) {
   return `${raw}${' '.repeat(width - raw.length)}`
 }
 
-function itemLine(item, width) {
+function itemLines(item, width) {
   const qty = Number(item.qty || 0)
   const unitPrice = Number(item.unitPrice ?? item.price ?? 0)
   const subtotal = Number(item.subtotal ?? qty * unitPrice)
-  const left = `${qty}x ${item.name || 'Item'}`
   const right = formatMoney(subtotal)
+  const rightWidth = Math.max(9, right.length)
+  const leftWidth = Math.max(10, width - rightWidth - 1)
 
-  const rightWidth = Math.max(10, right.length)
-  const leftWidth = Math.max(8, width - rightWidth - 1)
+  const nameLines = wrapText(String(item.name || 'Item'), Math.max(6, leftWidth - 3))
+  const firstLeft = `${qty}x ${nameLines[0] || ''}`
+  const lines = []
 
-  return `${padRight(clampLine(left, leftWidth), leftWidth)} ${right}`
+  if (firstLeft.length + 1 + right.length <= width) {
+    lines.push(`${padRight(firstLeft, leftWidth)} ${right}`)
+  } else {
+    lines.push(firstLeft)
+    lines.push(right.padStart(width, ' '))
+  }
+
+  for (let i = 1; i < nameLines.length; i += 1) {
+    lines.push(nameLines[i])
+  }
+
+  return lines
 }
 
 function buildTicketText(ticket) {
   const lines = []
   const separator = '-'.repeat(PAPER_WIDTH)
+  const createdAtLabel = ticket.createdAt
+    ? new Date(ticket.createdAt).toLocaleString('es-AR')
+    : new Date().toLocaleString('es-AR')
 
   lines.push(center('COSMICO', PAPER_WIDTH))
   lines.push(separator)
   lines.push(`Ticket #${ticket.number ?? ''}`)
-  lines.push(`Fecha: ${ticket.createdAtIso || new Date(ticket.createdAt || Date.now()).toISOString()}`)
+  lines.push(`Fecha: ${createdAtLabel}`)
   if (ticket.status) lines.push(`Estado: ${ticket.status}`)
   lines.push(separator)
 
   const items = Array.isArray(ticket.items) ? ticket.items : []
   for (const item of items) {
-    lines.push(itemLine(item, PAPER_WIDTH))
+    lines.push(...itemLines(item, PAPER_WIDTH))
   }
 
   lines.push(separator)
@@ -114,7 +170,7 @@ function buildTicketText(ticket) {
     lines.push('Pago:')
     for (const payment of payments) {
       const method = String(payment.method || 'otro')
-      lines.push(`- ${method}: ${formatMoney(payment.amount)}`)
+      lines.push(...wrapText(`- ${method}: ${formatMoney(payment.amount)}`, PAPER_WIDTH))
     }
   }
 
@@ -122,7 +178,7 @@ function buildTicketText(ticket) {
 
   if (ticket.note) {
     lines.push(separator)
-    lines.push(`Nota: ${ticket.note}`)
+    lines.push(...wrapText(`Nota: ${ticket.note}`, PAPER_WIDTH))
   }
 
   lines.push('')
