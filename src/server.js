@@ -148,19 +148,14 @@ function itemLines(item, width) {
 function buildTicketText() {
   const lines = []
 
-  // ESC/POS commands: \x1b@ = reset, \x1da1 = center align, \x1da0 = left align, \x1d!1 = double height/width font
+  // ESC/POS commands: \x1b@ = reset, \x1da1 = center align, \x1dV1 = full cut
   lines.push('\x1b@') // Reset printer
-  lines.push(`\x1dW${String.fromCharCode(PAPER_WIDTH)}`) // Set print area width
   lines.push('\x1da1') // Center align
-  lines.push('\x1d!1') // Double height/width font
   lines.push(center('COSMICO', PAPER_WIDTH))
-  lines.push('\x1d!0') // Normal font
-  lines.push('')
-  lines.push('\x1da0') // Left align
   lines.push('')
   lines.push('\x1dV1') // Full cut
 
-  return lines.join('\n')
+  return lines.join('\r\n')
 }
 
 async function ensureTmpDir() {
