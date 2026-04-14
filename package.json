@@ -1,0 +1,17 @@
+{
+  "name": "printer-bridge-server",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Servidor local para recibir tickets JSON e imprimirlos en una impresora conectada a la PC.",
+  "main": "src/server.js",
+  "scripts": {
+    "dev": "node --watch src/server.js",
+    "start": "node src/server.js"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "dotenv": "^16.6.1",
+    "express": "^4.21.2"
+  }
+}
