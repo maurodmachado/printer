@@ -16,25 +16,15 @@ const app = express()
 const PORT = Number(process.env.PORT || 4100)
 const PRINTER_ROUTE = process.env.PRINTER_ROUTE || '/print-ticket'
 const PRINTER_NAME = (process.env.PRINTER_NAME || '').trim()
-const PRINTER_SHARE_PATH = normalizeEnvValue(process.env.PRINTER_SHARE_PATH)
 const PRINTER_API_KEY = (process.env.PRINTER_API_KEY || '').trim()
-const PAPER_WIDTH = Math.max(24, Number(process.env.PAPER_WIDTH || 32))
+const PAPER_WIDTH = Math.max(24, Number(process.env.PAPER_WIDTH || 48))
 const KEEP_TMP_FILES = String(process.env.KEEP_TMP_FILES || 'false').toLowerCase() === 'true'
 const DRY_RUN = String(process.env.DRY_RUN || 'false').toLowerCase() === 'true'
+const WIN_PRINT_ORDER = String(process.env.WIN_PRINT_ORDER || 'notepad,cmd')
+  .split(',')
+  .map((method) => method.trim().toLowerCase())
+  .filter(Boolean)
 const ALLOWED_ORIGIN = process.env.ALLOWED_ORIGIN || '*'
-
-function normalizeEnvValue(value) {
-  if (typeof value !== 'string') {
-    return ''
-  }
-
-  let cleaned = value.trim()
-  if ((cleaned.startsWith('"') && cleaned.endsWith('"')) || (cleaned.startsWith("'") && cleaned.endsWith("'"))) {
-    cleaned = cleaned.slice(1, -1).trim()
-  }
-
-  return cleaned
-}
 
 function logInfo(message, meta = {}) {
   const timestamp = new Date().toISOString()
@@ -158,11 +148,58 @@ function itemLines(item, width) {
   return lines
 }
 
-function buildTicketText() {
-  // Texto mínimo para validación: solo COSMICO
-  // Se centra usando espacios ASCII para evitar comandos ESC/POS.
-  const centered = center('COSMICO', PAPER_WIDTH)
-  return Buffer.from(`${centered}\r\n`, 'ascii')
+function buildTicketText(ticket) {
+  const lines = []
+  const separator = '-'.repeat(PAPER_WIDTH)
+  const createdAtLabel = ticket.createdAt
+    ? new Date(ticket.createdAt).toLocaleString('es-AR')
+    : new Date().toLocaleString('es-AR')
+
+  // ESC/POS commands: \x1b@ = reset, \x1da1 = center align, \x1da0 = left align, \x1d!1 = double height/width font
+  lines.push('\x1b@') // Reset printer
+  lines.push('\x1da1') // Center align
+  lines.push(center('🛸 CÓSMICO 🛸', PAPER_WIDTH))
+  lines.push(separator)
+  lines.push('\x1d!1') // Double height/width font for order number
+  lines.push(`ORDEN #${ticket.number ?? ''}`)
+  lines.push('\x1d!0') // Normal font
+  lines.push('\x1da0') // Left align
+  lines.push(separator)
+  lines.push(`Fecha: ${createdAtLabel}`)
+  lines.push(separator)
+
+  const items = Array.isArray(ticket.items) ? ticket.items : []
+  for (const item of items) {
+    lines.push(...itemLines(item, PAPER_WIDTH))
+  }
+
+  lines.push(separator)
+
+  const payments = Array.isArray(ticket.paymentBreakdown) ? ticket.paymentBreakdown : []
+  if (payments.length > 0) {
+    for (const payment of payments) {
+      const method = String(payment.method || 'otro')
+      const amount = formatMoney(payment.amount)
+      lines.push(`Pago: ${method} - ${amount}`)
+    }
+  }
+  lines.push(separator)
+  lines.push(`TOTAL: ${formatMoney(ticket.total)}`)
+  lines.push(separator)
+
+  if (ticket.note) {
+    lines.push(`Nota: ${ticket.note}`)
+    lines.push(separator)
+  }
+
+  lines.push('')
+  lines.push('\x1da1') // Center align
+  lines.push(center('Sabores de otra galaxia', PAPER_WIDTH))
+  lines.push(center('Ticket no valido como factura', PAPER_WIDTH - 12))
+  lines.push('\x1da0') // Left align for cut
+  lines.push('\x1dV1') // Full cut
+
+  return lines.join('\n')
 }
 
 async function ensureTmpDir() {
@@ -173,83 +210,70 @@ async function ensureTmpDir() {
 
 async function printFile(filePath) {
   if (process.platform === 'win32') {
-    const printerShare = PRINTER_SHARE_PATH
-    if (printerShare) {
-      try {
-        logInfo('Intentando imprimir en Windows via printer share (raw write)', {
-          filePath,
-          printerShare,
-        })
-        const rawData = await fs.readFile(filePath)
-        await fs.writeFile(printerShare, rawData)
-        logInfo('Impresion OK via printer share (raw write)', {
-          filePath,
-          printerShare,
-        })
-        return
-      } catch (shareError) {
-        logInfo('Fallo al imprimir via printer share directo, intentando fallback copy /b', {
-          error: shareError?.message || String(shareError),
-          printerShare,
-        })
+    const errors = []
+    for (const method of WIN_PRINT_ORDER) {
+      if (method === 'notepad') {
         try {
-          await execFileAsync('cmd', ['/c', `copy /b "${filePath}" "${printerShare}"`])
-          logInfo('Impresion OK via printer share (copy /b)', {
+          const notepadArgs = PRINTER_NAME ? ['/pt', filePath, PRINTER_NAME] : ['/p', filePath]
+          logInfo('Intentando imprimir con notepad', {
             filePath,
-            printerShare,
+            printerName: PRINTER_NAME || '(default)',
+          })
+          await execFileAsync('notepad', notepadArgs)
+          logInfo('Impresion OK via notepad', {
+            filePath,
+            printerName: PRINTER_NAME || '(default)',
           })
           return
-        } catch (copyError) {
-          logInfo('Fallo al imprimir via printer share copy /b, continuando con fallback', {
-            error: copyError?.message || String(copyError),
-            printerShare,
+        } catch (notepadError) {
+          errors.push({ method: 'notepad', error: notepadError })
+          logInfo('Notepad falló, intentando siguiente método', {
+            filePath,
+            printerName: PRINTER_NAME || '(default)',
+            error: notepadError?.message || String(notepadError),
+          })
+        }
+      }
+
+      if (method === 'cmd') {
+        try {
+          const args = PRINTER_NAME ? ['/c', 'print', `/D:${PRINTER_NAME}`, filePath] : ['/c', 'print', filePath]
+          logInfo('Intentando imprimir con cmd print', {
+            filePath,
+            printerName: PRINTER_NAME || '(default)',
+          })
+          await execFileAsync('cmd', args)
+          logInfo('Impresion OK via PRINT', {
+            filePath,
+            printerName: PRINTER_NAME || '(default)',
+          })
+          return
+        } catch (cmdError) {
+          errors.push({ method: 'cmd', error: cmdError })
+          logInfo('Cmd print falló, intentando siguiente método', {
+            filePath,
+            printerName: PRINTER_NAME || '(default)',
+            error: cmdError?.message || String(cmdError),
           })
         }
       }
     }
 
-    try {
-      const notepadArgs = PRINTER_NAME ? ['/pt', filePath, PRINTER_NAME] : ['/p', filePath]
-      logInfo('Intentando imprimir con notepad', {
-        filePath,
-        printerName: PRINTER_NAME || '(default)',
-      })
-      await execFileAsync('notepad', notepadArgs)
-      logInfo('Impresion OK via notepad', {
-        filePath,
-        printerName: PRINTER_NAME || '(default)',
-      })
-      return
-    } catch (notepadError) {
-      try {
-        const args = PRINTER_NAME ? ['/c', 'print', `/D:${PRINTER_NAME}`, filePath] : ['/c', 'print', filePath]
-        logInfo('Fallback a PRINT de cmd', {
-          filePath,
-          printerName: PRINTER_NAME || '(default)',
-        })
-        await execFileAsync('cmd', args)
-        logInfo('Impresion OK via PRINT', {
-          filePath,
-          printerName: PRINTER_NAME || '(default)',
-        })
-        return
-      } catch (cmdError) {
-        const notepadMessage = notepadError?.stderr || notepadError?.message || 'NOTEPAD print failed'
-        const cmdMessage = cmdError?.stderr || cmdError?.message || 'PRINT failed'
-        throw new Error(`Windows print failed. NOTEPAD: ${notepadMessage}. PRINT: ${cmdMessage}`)
-      }
-    }
+    const message = errors
+      .map(({ method, error }) => `${method.toUpperCase()}: ${error?.stderr || error?.message || String(error)}`)
+      .join(' | ')
+    throw new Error(`Windows print failed. ${message}`)
   }
 
   try {
-    const args = PRINTER_NAME ? ['-d', PRINTER_NAME, '-o', 'raw', filePath] : ['-o', 'raw', filePath]
+    const args = PRINTER_NAME ? ['-d', PRINTER_NAME, filePath] : [filePath]
     await execFileAsync('lp', args)
   } catch (error) {
     if (error?.code !== 'ENOENT') {
       throw error
     }
 
-    const args = PRINTER_NAME ? ['-P', PRINTER_NAME, '-o', 'raw', filePath] : ['-o', 'raw', filePath]
+    const args = PRINTER_NAME ? ['-P', PRINTER_NAME, filePath] : [filePath]
     await execFileAsync('lpr', args)
   }
 }
@@ -336,10 +360,10 @@ app.post(PRINTER_ROUTE, async (req, res) => {
     const ticket = req.body.ticket
     const text = buildTicketText(ticket)
     const tmpDir = await ensureTmpDir()
-    const fileName = `ticket-${ticket.number || 'na'}-${randomUUID()}.bin`
+    const fileName = `ticket-${ticket.number || 'na'}-${randomUUID()}.txt`
     const filePath = path.join(tmpDir, fileName)
 
-    await fs.writeFile(filePath, text)
+    await fs.writeFile(filePath, text, 'utf8')
     logInfo('Ticket serializado en archivo temporal', {
       requestId: req.requestId,
       filePath,

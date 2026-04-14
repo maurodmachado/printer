@@ -20,7 +20,7 @@ Variables principales:
 - `PORT`: puerto HTTP local del bridge (default `4100`).
 - `PRINTER_ROUTE`: ruta donde recibe tickets (default `/print-ticket`).
 - `PRINTER_NAME`: nombre exacto de impresora del SO (opcional; si no, usa impresora por defecto).
-- `PRINTER_SHARE_PATH`: ruta compartida UNC para envio RAW en Windows (ej: `\\localhost\\EPSON_TM_T20`). Si el nombre de la impresora tiene espacios, ponlo entre comillas en `.env`, por ejemplo: `PRINTER_SHARE_PATH="\\\\localhost\\POS58 Printer"`.
+- `PRINTER_SHARE_PATH`: ruta compartida UNC para envio RAW en Windows (ej: `\\localhost\\EPSON_TM_T20`).
 - `PRINTER_API_KEY`: si se define, exige header `x-printer-key`.
 - `ALLOWED_ORIGIN`: origen permitido por CORS (default `*`).
 - `DRY_RUN=true`: no imprime, solo genera archivo para test.
