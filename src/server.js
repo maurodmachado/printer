@@ -152,13 +152,11 @@ function buildTicketText(ticket) {
     ? new Date(ticket.createdAt).toLocaleString('es-AR')
     : new Date().toLocaleString('es-AR')
 
-  lines.push(center('🛸 CÓSMICO 🛸', PAPER_WIDTH))
+  lines.push(center('COSMICO', PAPER_WIDTH))
   lines.push(separator)
-  lines.push('')
-  lines.push(center(`ORDEN #${ticket.number ?? ''}`, PAPER_WIDTH))
-  lines.push('')
-  lines.push(separator)
+  lines.push(`Ticket #${ticket.number ?? ''}`)
   lines.push(`Fecha: ${createdAtLabel}`)
+  if (ticket.status) lines.push(`Estado: ${ticket.status}`)
   lines.push(separator)
 
   const items = Array.isArray(ticket.items) ? ticket.items : []
@@ -170,26 +168,23 @@ function buildTicketText(ticket) {
 
   const payments = Array.isArray(ticket.paymentBreakdown) ? ticket.paymentBreakdown : []
   if (payments.length > 0) {
+    lines.push('Pago:')
     for (const payment of payments) {
       const method = String(payment.method || 'otro')
-      const amount = formatMoney(payment.amount)
-      lines.push(...wrapText(`Pago: ${method} - ${amount}`, PAPER_WIDTH))
+      lines.push(...wrapText(`- ${method}: ${formatMoney(payment.amount)}`, PAPER_WIDTH))
     }
   }
 
-  lines.push(separator)
   lines.push(`TOTAL: ${formatMoney(ticket.total)}`)
-  lines.push(separator)
 
   if (ticket.note) {
-    lines.push(...wrapText(`Nota: ${ticket.note}`, PAPER_WIDTH))
     lines.push(separator)
+    lines.push(...wrapText(`Nota: ${ticket.note}`, PAPER_WIDTH))
   }
 
   lines.push('')
-  lines.push(center('Sabores de otra galaxia', PAPER_WIDTH))
+  lines.push(center('Gracias por tu compra', PAPER_WIDTH))
   lines.push('')
-  lines.push(center('Ticket no valido como factura', PAPER_WIDTH - 12))
   lines.push('')
   lines.push('')
 
@@ -219,7 +214,7 @@ async function printFile(filePath) {
         return
       }
 
-      const args = PRINTER_NAME ? ['/c', 'print', `/D:${PRINTER_NAME}`, `"${filePath}"`] : ['/c', 'print', `"${filePath}"`]
+      const args = PRINTER_NAME ? ['/c', 'print', `/D:${PRINTER_NAME}`, filePath] : ['/c', 'print', filePath]
       logInfo('Intentando impresion con PRINT de cmd', {
         filePath,
         printerName: PRINTER_NAME || '(default)',
@@ -258,34 +253,14 @@ async function printFile(filePath) {
 
   try {
     const args = PRINTER_NAME ? ['-d', PRINTER_NAME, filePath] : [filePath]
-    logInfo('Intentando impresion con lp en macOS/Linux', {
-      filePath,
-      printerName: PRINTER_NAME || '(default)',
-    })
     await execFileAsync('lp', args)
-    logInfo('Impresion OK via lp', {
-      filePath,
-      printerName: PRINTER_NAME || '(default)',
-    })
   } catch (error) {
     if (error?.code !== 'ENOENT') {
-      logError('Fallo impresion con lp', error, {
-        filePath,
-        printerName: PRINTER_NAME || '(default)',
-      })
       throw error
     }
 
     const args = PRINTER_NAME ? ['-P', PRINTER_NAME, filePath] : [filePath]
-    logInfo('Fallback a lpr', {
-      filePath,
-      printerName: PRINTER_NAME || '(default)',
-    })
     await execFileAsync('lpr', args)
-    logInfo('Impresion OK via lpr', {
-      filePath,
-      printerName: PRINTER_NAME || '(default)',
-    })
   }
 }
 
@@ -303,45 +278,17 @@ function assertPayload(payload) {
   }
 }
 
-async function listPrinters() {
-  if (process.platform === 'win32') {
-    const script = 'Get-Printer | Select-Object -ExpandProperty Name'
-    const { stdout } = await execFileAsync('powershell', ['-NoProfile', '-Command', script])
-    return String(stdout)
-      .split(/\r?\n/)
-      .map((line) => line.trim())
-      .filter(Boolean)
-  }
-
-  if (process.platform === 'darwin') {
-    try {
-      const { stdout } = await execFileAsync('lpstat', ['-p'])
-      return String(stdout)
-        .split(/\n/)
-        .map((line) => {
-          const match = line.match(/^printer (.+?) is/)
-          return match ? match[1] : null
-        })
-        .filter(Boolean)
-    } catch {
-      // Fallback o vacío si lpstat falla
-      return []
-    }
-  }
-
-  // Para otros sistemas (linux), intentar lpstat o cups
-  try {
-    const { stdout } = await execFileAsync('lpstat', ['-p'])
-    return String(stdout)
-      .split(/\n/)
-      .map((line) => {
-        const match = line.match(/^printer (.+?) is/)
-        return match ? match[1] : null
-      })
-      .filter(Boolean)
-  } catch {
+async function listWindowsPrinters() {
+  if (process.platform !== 'win32') {
     return []
   }
+
+  const script = 'Get-Printer | Select-Object -ExpandProperty Name'
+  const { stdout } = await execFileAsync('powershell', ['-NoProfile', '-Command', script])
+  return String(stdout)
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
 }
 
 app.get('/health', (_req, res) => {
@@ -363,7 +310,7 @@ app.get('/health', (_req, res) => {
 
 app.get('/printers', async (_req, res) => {
   try {
-    const printers = await listPrinters()
+    const printers = await listWindowsPrinters()
     logInfo('Listado de impresoras obtenido', {
       count: printers.length,
       printers,
