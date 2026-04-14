@@ -16,7 +16,6 @@ const app = express()
 const PORT = Number(process.env.PORT || 4100)
 const PRINTER_ROUTE = process.env.PRINTER_ROUTE || '/print-ticket'
 const PRINTER_NAME = (process.env.PRINTER_NAME || '').trim()
-const PRINTER_SHARE_PATH = (process.env.PRINTER_SHARE_PATH || '').trim()
 const PRINTER_API_KEY = (process.env.PRINTER_API_KEY || '').trim()
 const PAPER_WIDTH = Math.max(24, Number(process.env.PAPER_WIDTH || 32))
 const KEEP_TMP_FILES = String(process.env.KEEP_TMP_FILES || 'false').toLowerCase() === 'true'
@@ -200,53 +199,34 @@ async function ensureTmpDir() {
 async function printFile(filePath) {
   if (process.platform === 'win32') {
     try {
-      if (PRINTER_SHARE_PATH) {
-        const args = ['/c', 'copy', '/b', filePath, PRINTER_SHARE_PATH]
-        logInfo('Intentando impresion RAW por share', {
-          filePath,
-          printerSharePath: PRINTER_SHARE_PATH,
-        })
-        await execFileAsync('cmd', args)
-        logInfo('Impresion OK via share RAW', {
-          filePath,
-          printerSharePath: PRINTER_SHARE_PATH,
-        })
-        return
-      }
-
-      const args = PRINTER_NAME ? ['/c', 'print', `/D:${PRINTER_NAME}`, filePath] : ['/c', 'print', filePath]
-      logInfo('Intentando impresion con PRINT de cmd', {
+      const notepadArgs = PRINTER_NAME ? ['/pt', filePath, PRINTER_NAME] : ['/p', filePath]
+      logInfo('Intentando imprimir con notepad', {
         filePath,
         printerName: PRINTER_NAME || '(default)',
       })
-      await execFileAsync('cmd', args)
-      logInfo('Impresion OK via PRINT', {
+      await execFileAsync('notepad', notepadArgs)
+      logInfo('Impresion OK via notepad', {
         filePath,
         printerName: PRINTER_NAME || '(default)',
       })
       return
-    } catch (winPrintError) {
+    } catch (notepadError) {
       try {
-        const psPrinterName = PRINTER_NAME.replace(/'/g, "''")
-        const psFilePath = filePath.replace(/'/g, "''")
-        const command = PRINTER_NAME
-          ? `Start-Process -FilePath '${psFilePath}' -Verb PrintTo -ArgumentList '${psPrinterName}' -WindowStyle Hidden`
-          : `Start-Process -FilePath '${psFilePath}' -Verb Print -WindowStyle Hidden`
-
-        logInfo('Fallback a Start-Process Print/PrintTo', {
+        const args = PRINTER_NAME ? ['/c', 'print', `/D:${PRINTER_NAME}`, filePath] : ['/c', 'print', filePath]
+        logInfo('Fallback a PRINT de cmd', {
           filePath,
           printerName: PRINTER_NAME || '(default)',
         })
-        await execFileAsync('powershell', ['-NoProfile', '-Command', command])
-        logInfo('Impresion OK via Start-Process', {
+        await execFileAsync('cmd', args)
+        logInfo('Impresion OK via PRINT', {
           filePath,
           printerName: PRINTER_NAME || '(default)',
         })
         return
-      } catch (fallbackError) {
-        const primaryMessage = winPrintError?.stderr || winPrintError?.message || 'Primary Windows print failed'
-        const fallbackMessage = fallbackError?.stderr || fallbackError?.message || 'Fallback print failed'
-        throw new Error(`Windows print failed. PRIMARY: ${primaryMessage}. FALLBACK: ${fallbackMessage}`)
+      } catch (cmdError) {
+        const notepadMessage = notepadError?.stderr || notepadError?.message || 'NOTEPAD print failed'
+        const cmdMessage = cmdError?.stderr || cmdError?.message || 'PRINT failed'
+        throw new Error(`Windows print failed. NOTEPAD: ${notepadMessage}. PRINT: ${cmdMessage}`)
       }
     }
   }
@@ -403,7 +383,6 @@ app.listen(PORT, () => {
     port: PORT,
     route: PRINTER_ROUTE,
     printerName: PRINTER_NAME || '(default)',
-    printerSharePath: PRINTER_SHARE_PATH || '(none)',
     dryRun: DRY_RUN,
     keepTmpFiles: KEEP_TMP_FILES,
     platform: os.platform(),
