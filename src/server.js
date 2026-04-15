@@ -27,6 +27,7 @@ const WIN_PRINT_ORDER = String(process.env.WIN_PRINT_ORDER || 'share,notepad,cmd
   .filter(Boolean)
 const ALLOWED_ORIGIN = process.env.ALLOWED_ORIGIN || '*'
 
+  const separator = '-'.repeat(PAPER_WIDTH)
 function logInfo(message, meta = {}) {
   const timestamp = new Date().toISOString()
   const details = Object.keys(meta).length > 0 ? ` | ${JSON.stringify(meta)}` : ''
@@ -123,7 +124,7 @@ function padRight(text, width) {
   return `${raw}${' '.repeat(width - raw.length)}`
 }
 
-function itemLines(item, width) {
+function itemLines(item, width, ticket) {
   const qty = Number(item.qty || 0)
   const unitPrice = Number(item.unitPrice ?? item.price ?? 0)
   const subtotal = Number(item.subtotal ?? qty * unitPrice)
@@ -149,37 +150,58 @@ function itemLines(item, width) {
   return lines
 }
 
+function capitalize(text){
+  return text.charAt(0).toUpperCase() + text.slice(1);
+}
+
 function buildTicketText(ticket) {
  const lines = []
-  const separator = '-'.repeat(PAPER_WIDTH)
   const createdAtLabel = ticket.createdAt
-    ? new Date(ticket.createdAt).toLocaleString('es-AR')
-    : new Date().toLocaleString('es-AR')
-  lines.push(center('🛸 CÓSMICO 🛸', PAPER_WIDTH))
-  lines.push(separator)
+    ? new Date(ticket.createdAt).toLocaleString('es-AR', {
+      day: '2-digit',
+      month: '2-digit',
+      year:'2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: false
+    })
+    : new Date().toLocaleString('es-AR', {
+      day: '2-digit',
+      month: '2-digit',
+      year:'2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: false
+    })
+  lines.push(center('COSMICO - @cosmico.cta', PAPER_WIDTH))
   lines.push('')
   lines.push(center(`ORDEN #${ticket.number ?? ''}`, PAPER_WIDTH))
   lines.push('')
-  lines.push(separator)
   lines.push(`Fecha: ${createdAtLabel}`)
+
+  lines.push(separator)
 const items = Array.isArray(ticket.items) ? ticket.items : []
   for (const item of items) {
-    lines.push(...itemLines(item, PAPER_WIDTH))
+    lines.push(...itemLines(item, PAPER_WIDTH, ticket))
   }
 
+  const rightWidth = Math.max(9, 8)
+  const leftWidth = Math.max(10, PAPER_WIDTH - rightWidth - 1)
+
+  lines.push('')
+  lines.push(`${padRight('TOTAL', leftWidth)} ${formatMoney(ticket.total)}`)
   lines.push(separator)
 
   const payments = Array.isArray(ticket.paymentBreakdown) ? ticket.paymentBreakdown : []
   if (payments.length > 0) {
     for (const payment of payments) {
-      const method = String(payment.method || 'otro')
+      const method = capitalize(String(payment.method || 'otro'))
       const amount = formatMoney(payment.amount)
       lines.push(...wrapText(`Pago: ${method} - ${amount}`, PAPER_WIDTH))
     }
   }
-lines.push(separator)
-lines.push(`TOTAL: ${formatMoney(ticket.total)}`)
-  lines.push(separator)
 
   if (ticket.note) {
     lines.push(...wrapText(`Nota: ${ticket.note}`, PAPER_WIDTH))
@@ -187,9 +209,11 @@ lines.push(`TOTAL: ${formatMoney(ticket.total)}`)
   }
 
   lines.push('')
-  lines.push(center('Sabores de otra galaxia', PAPER_WIDTH))
+  lines.push(center('¡Gracias por tu compra!', PAPER_WIDTH))
   lines.push('')
-  lines.push(center('Ticket no valido como factura', PAPER_WIDTH - 12))
+  lines.push(center('SABORES DE OTRA GALAXIA', PAPER_WIDTH))
+  lines.push('')
+  lines.push(center('Ticket no válido como factura', PAPER_WIDTH))
   lines.push('')
   lines.push('')
 
