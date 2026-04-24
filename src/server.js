@@ -5,29 +5,26 @@ import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { randomUUID } from 'node:crypto'
-import { execFile } from 'node:child_process'
+import { exec } from 'node:child_process'
 import { promisify } from 'node:util'
 
 dotenv.config()
 
-const execFileAsync = promisify(execFile)
+const execAsync = promisify(exec)
 const app = express()
 
 const PORT = Number(process.env.PORT || 4100)
 const PRINTER_ROUTE = process.env.PRINTER_ROUTE || '/print-ticket'
-const PRINTER_NAME = (process.env.PRINTER_NAME || '').trim()
 const PRINTER_SHARE_PATH = (process.env.PRINTER_SHARE_PATH || '').trim()
 const PRINTER_API_KEY = (process.env.PRINTER_API_KEY || '').trim()
 const PAPER_WIDTH = Math.max(24, Number(process.env.PAPER_WIDTH || 48))
 const KEEP_TMP_FILES = String(process.env.KEEP_TMP_FILES || 'false').toLowerCase() === 'true'
 const DRY_RUN = String(process.env.DRY_RUN || 'false').toLowerCase() === 'true'
-const WIN_PRINT_ORDER = String(process.env.WIN_PRINT_ORDER || 'share,notepad,cmd')
-  .split(',')
-  .map((method) => method.trim().toLowerCase())
-  .filter(Boolean)
+const WIN_PRINT_ORDER = ["share"]
 const ALLOWED_ORIGIN = process.env.ALLOWED_ORIGIN || '*'
 
-  const separator = '-'.repeat(PAPER_WIDTH)
+const separator = '-'.repeat(PAPER_WIDTH)
+
 function logInfo(message, meta = {}) {
   const timestamp = new Date().toISOString()
   const details = Object.keys(meta).length > 0 ? ` | ${JSON.stringify(meta)}` : ''
@@ -45,6 +42,7 @@ function logError(message, error, meta = {}) {
 
 app.use(cors({ origin: ALLOWED_ORIGIN }))
 app.use(express.json({ limit: '1mb' }))
+
 app.use((req, _res, next) => {
   req.requestId = randomUUID()
   logInfo('Request recibido', {
@@ -71,57 +69,31 @@ function center(text, width) {
   return `${' '.repeat(left)}${clean}`
 }
 
-function splitToken(token, width) {
-  if (token.length <= width) {
-    return [token]
-  }
-
-  const chunks = []
-  for (let i = 0; i < token.length; i += width) {
-    chunks.push(token.slice(i, i + width))
-  }
-  return chunks
-}
-
 function wrapText(text, width) {
   const raw = String(text ?? '').trim()
-  if (!raw) {
-    return ['']
-  }
+  if (!raw) return ['']
 
-  const tokens = raw
-    .split(/\s+/)
-    .flatMap((token) => splitToken(token, width))
-
+  const words = raw.split(/\s+/)
   const lines = []
   let current = ''
 
-  for (const token of tokens) {
-    if (!current) {
-      current = token
-      continue
+  for (const word of words) {
+    if ((current + ' ' + word).trim().length <= width) {
+      current = (current + ' ' + word).trim()
+    } else {
+      lines.push(current)
+      current = word
     }
-
-    if (`${current} ${token}`.length <= width) {
-      current = `${current} ${token}`
-      continue
-    }
-
-    lines.push(current)
-    current = token
   }
 
-  if (current) {
-    lines.push(current)
-  }
-
-  return lines.length > 0 ? lines : ['']
+  if (current) lines.push(current)
+  return lines
 }
 
 function padRight(text, width) {
   const raw = String(text || '')
   if (raw.length >= width) return raw
-  return `${raw}${' '.repeat(width - raw.length)}`
+  return raw + ' '.repeat(width - raw.length)
 }
 
 function itemLines(item, width, ticket) {
@@ -227,243 +199,87 @@ async function ensureTmpDir() {
 }
 
 async function printFile(filePath) {
-  if (process.platform === 'win32') {
-    const errors = []
-    for (const method of WIN_PRINT_ORDER) {
-      if (method === 'share') {
-        if (!PRINTER_SHARE_PATH) {
-          continue
-        }
-
-        try {
-          const args = ['/c', 'copy', '/b', filePath, PRINTER_SHARE_PATH]
-          logInfo('Intentando imprimir con share path', {
-            filePath,
-            printerSharePath: PRINTER_SHARE_PATH,
-          })
-          await execFileAsync('cmd', args)
-          logInfo('Impresion OK via share path', {
-            filePath,
-            printerSharePath: PRINTER_SHARE_PATH,
-          })
-          return
-        } catch (shareError) {
-          errors.push({ method: 'share', error: shareError })
-          logInfo('Share path falló, intentando siguiente método', {
-            filePath,
-            printerSharePath: PRINTER_SHARE_PATH,
-            error: shareError?.message || String(shareError),
-          })
-        }
-      }
-
-      if (method === 'notepad') {
-        try {
-          const notepadArgs = PRINTER_NAME ? ['/pt', filePath, PRINTER_NAME] : ['/p', filePath]
-          logInfo('Intentando imprimir con notepad', {
-            filePath,
-            printerName: PRINTER_NAME || '(default)',
-          })
-          await execFileAsync('notepad', notepadArgs)
-          logInfo('Impresion OK via notepad', {
-            filePath,
-            printerName: PRINTER_NAME || '(default)',
-          })
-          return
-        } catch (notepadError) {
-          errors.push({ method: 'notepad', error: notepadError })
-          logInfo('Notepad falló, intentando siguiente método', {
-            filePath,
-            printerName: PRINTER_NAME || '(default)',
-            error: notepadError?.message || String(notepadError),
-          })
-        }
-      }
-
-      if (method === 'cmd') {
-        try {
-          const args = PRINTER_NAME ? ['/c', 'print', `/D:${PRINTER_NAME}`, filePath] : ['/c', 'print', filePath]
-          logInfo('Intentando imprimir con cmd print', {
-            filePath,
-            printerName: PRINTER_NAME || '(default)',
-          })
-          await execFileAsync('cmd', args)
-          logInfo('Impresion OK via PRINT', {
-            filePath,
-            printerName: PRINTER_NAME || '(default)',
-          })
-          return
-        } catch (cmdError) {
-          errors.push({ method: 'cmd', error: cmdError })
-          logInfo('Cmd print falló, intentando siguiente método', {
-            filePath,
-            printerName: PRINTER_NAME || '(default)',
-            error: cmdError?.message || String(cmdError),
-          })
-        }
-      }
-    }
-
-    const message = errors
-      .map(({ method, error }) => `${method.toUpperCase()}: ${error?.stderr || error?.message || String(error)}`)
-      .join(' | ')
-    throw new Error(`Windows print failed. ${message}`)
+  if (process.platform !== 'win32') {
+    throw new Error('Solo soportado en Windows')
   }
 
-  try {
-    const args = PRINTER_NAME ? ['-d', PRINTER_NAME, filePath] : [filePath]
-    await execFileAsync('lp', args)
-  } catch (error) {
-    if (error?.code !== 'ENOENT') {
-      throw error
-    }
+  const errors = []
 
-    const args = PRINTER_NAME ? ['-P', PRINTER_NAME, filePath] : [filePath]
-    await execFileAsync('lpr', args)
+  for (const method of WIN_PRINT_ORDER) {
+    if (method === 'share') {
+      if (!PRINTER_SHARE_PATH) {
+        throw new Error('PRINTER_SHARE_PATH no definido')
+      }
+
+      try {
+        const command = `cmd /c copy /b "${filePath}" "${PRINTER_SHARE_PATH}"`
+
+        logInfo('Intentando imprimir', { command })
+
+        const { stdout, stderr } = await execAsync(command)
+
+        logInfo('Impresión OK', { stdout, stderr })
+        return
+      } catch (error) {
+        console.error('STDERR REAL:', error.stderr)
+
+        errors.push({
+          method: 'share',
+          error: error.stderr || error.message,
+        })
+      }
+    }
   }
+
+  throw new Error(
+    'Windows print failed → ' +
+      errors.map(e => `${e.method}: ${e.error}`).join(' | ')
+  )
 }
 
 function assertPayload(payload) {
-  if (!payload || typeof payload !== 'object') {
-    throw new Error('Body invalido: se esperaba JSON')
-  }
-
-  if (!payload.ticket || typeof payload.ticket !== 'object') {
-    throw new Error('Body invalido: falta objeto ticket')
-  }
-
-  if (!Array.isArray(payload.ticket.items) || payload.ticket.items.length === 0) {
-    throw new Error('Body invalido: ticket.items debe tener al menos un item')
+  if (!payload?.ticket?.items?.length) {
+    throw new Error('Ticket inválido')
   }
 }
-
-async function listWindowsPrinters() {
-  if (process.platform !== 'win32') {
-    return []
-  }
-
-  const script = 'Get-Printer | Select-Object -ExpandProperty Name'
-  const { stdout } = await execFileAsync('powershell', ['-NoProfile', '-Command', script])
-  return String(stdout)
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter(Boolean)
-}
-
-app.get('/health', (_req, res) => {
-  logInfo('Health check consultado', {
-    route: PRINTER_ROUTE,
-    dryRun: DRY_RUN,
-    printerName: PRINTER_NAME || '(default)',
-    platform: os.platform(),
-  })
-  res.json({
-    ok: true,
-    service: 'printer-bridge-server',
-    route: PRINTER_ROUTE,
-    dryRun: DRY_RUN,
-    printerName: PRINTER_NAME || '(default)',
-    platform: os.platform(),
-  })
-})
-
-app.get('/printers', async (_req, res) => {
-  try {
-    const printers = await listWindowsPrinters()
-    logInfo('Listado de impresoras obtenido', {
-      count: printers.length,
-      printers,
-    })
-    res.json({ ok: true, printers })
-  } catch (error) {
-    logError('Fallo al listar impresoras', error)
-    res.status(500).json({ error: error.message || 'No se pudo listar impresoras' })
-  }
-})
 
 app.post(PRINTER_ROUTE, async (req, res) => {
   try {
-    logInfo('Inicio de procesamiento de ticket', {
-      requestId: req.requestId,
-    })
-
     if (PRINTER_API_KEY) {
-      const key = String(req.headers['x-printer-key'] || '')
-      if (key !== PRINTER_API_KEY) {
-        logInfo('Ticket rechazado por API key invalida', {
-          requestId: req.requestId,
-        })
-        return res.status(401).json({ error: 'Unauthorized printer key' })
+      if (req.headers['x-printer-key'] !== PRINTER_API_KEY) {
+        return res.status(401).json({ error: 'Unauthorized' })
       }
     }
 
     assertPayload(req.body)
-    logInfo('Payload validado', {
-      requestId: req.requestId,
-    })
 
     const ticket = req.body.ticket
     const text = buildTicketText(ticket)
-    const tmpDir = await ensureTmpDir()
-    const fileName = `ticket-${ticket.number || 'na'}-${randomUUID()}.txt`
-    const filePath = path.join(tmpDir, fileName)
 
-    await fs.writeFile(filePath, text, 'utf8')
-    logInfo('Ticket serializado en archivo temporal', {
-      requestId: req.requestId,
-      filePath,
-      ticketNumber: ticket.number ?? null,
-      itemsCount: Array.isArray(ticket.items) ? ticket.items.length : 0,
-      total: ticket.total ?? 0,
-    })
+    const tmpDir = await ensureTmpDir()
+    const filePath = path.join(tmpDir, `ticket-${randomUUID()}.txt`)
+
+    await fs.writeFile(filePath, text)
+
+    logInfo('Archivo creado', { filePath })
 
     if (!DRY_RUN) {
       await printFile(filePath)
-      logInfo('Ticket enviado al sistema de impresion', {
-        requestId: req.requestId,
-        filePath,
-      })
+
       if (!KEEP_TMP_FILES) {
         await fs.unlink(filePath).catch(() => {})
-        logInfo('Archivo temporal eliminado', {
-          requestId: req.requestId,
-          filePath,
-        })
       }
-    } else {
-      logInfo('DRY_RUN activo: no se envio a impresora', {
-        requestId: req.requestId,
-        filePath,
-      })
     }
 
-    logInfo('Proceso de ticket finalizado OK', {
-      requestId: req.requestId,
-      ticketNumber: ticket.number ?? null,
-    })
-    return res.status(200).json({
-      ok: true,
-      printed: !DRY_RUN,
-      dryRun: DRY_RUN,
-      filePath,
-      ticketNumber: ticket.number ?? null,
-    })
+    res.json({ ok: true })
   } catch (error) {
-    logError('Proceso de ticket fallo', error, {
-      requestId: req.requestId,
-    })
-    return res.status(500).json({ error: error.message || 'Print relay failed' })
+    logError('Error imprimiendo', error)
+    res.status(500).json({ error: error.message })
   }
 })
 
 app.listen(PORT, () => {
   logInfo('Printer bridge activo', {
     url: `http://localhost:${PORT}${PRINTER_ROUTE}`,
-    port: PORT,
-    route: PRINTER_ROUTE,
-    printerName: PRINTER_NAME || '(default)',
-    dryRun: DRY_RUN,
-    keepTmpFiles: KEEP_TMP_FILES,
-    platform: os.platform(),
   })
 })
