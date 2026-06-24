@@ -15,6 +15,7 @@ const app = express()
 
 const PORT = Number(process.env.PORT || 4100)
 const PRINTER_ROUTE = process.env.PRINTER_ROUTE || '/print-ticket'
+const OPEN_DRAWER_ROUTE = process.env.OPEN_DRAWER_ROUTE || '/open-drawer'
 const PRINTER_SHARE_PATH = (process.env.PRINTER_SHARE_PATH || '').trim()
 const PRINTER_API_KEY = (process.env.PRINTER_API_KEY || '').trim()
 const PAPER_WIDTH = Math.max(24, Number(process.env.PAPER_WIDTH || 48))
@@ -195,6 +196,11 @@ const items = Array.isArray(ticket.items) ? ticket.items : []
   return `${lines.join('\n')}\n`
 }
 
+function buildDrawerKickBuffer(drawerPin = CASH_DRAWER_PIN) {
+  const pin = drawerPin === 5 ? 1 : 0
+  return Buffer.from([0x1b, 0x70, pin, 0x19, 0xfa])
+}
+
 function buildEscPosTail({ openDrawer = true, cut = true, drawerPin = CASH_DRAWER_PIN } = {}) {
   const chunks = []
 
@@ -204,8 +210,7 @@ function buildEscPosTail({ openDrawer = true, cut = true, drawerPin = CASH_DRAWE
   }
 
   if (openDrawer) {
-    const pin = drawerPin === 5 ? 1 : 0
-    chunks.push(Buffer.from([0x1b, 0x70, pin, 0x19, 0xfa]))
+    chunks.push(buildDrawerKickBuffer(drawerPin))
   }
 
   return Buffer.concat(chunks)
@@ -227,6 +232,29 @@ async function ensureTmpDir() {
   const target = path.join(process.cwd(), 'tmp')
   await fs.mkdir(target, { recursive: true })
   return target
+}
+
+async function sendRawBuffer(buffer, filePrefix) {
+  const tmpDir = await ensureTmpDir()
+  const filePath = path.join(tmpDir, `${filePrefix}-${randomUUID()}.bin`)
+
+  await fs.writeFile(filePath, buffer)
+
+  logInfo('Archivo RAW creado', { filePath, bytes: buffer.length })
+
+  if (!DRY_RUN) {
+    await printFile(filePath)
+
+    if (!KEEP_TMP_FILES) {
+      await fs.unlink(filePath).catch(() => {})
+    }
+  }
+
+  return filePath
+}
+
+function isUnauthorized(req) {
+  return PRINTER_API_KEY && req.headers['x-printer-key'] !== PRINTER_API_KEY
 }
 
 async function printFile(filePath) {
@@ -276,10 +304,8 @@ function assertPayload(payload) {
 
 app.post(PRINTER_ROUTE, async (req, res) => {
   try {
-    if (PRINTER_API_KEY) {
-      if (req.headers['x-printer-key'] !== PRINTER_API_KEY) {
-        return res.status(401).json({ error: 'Unauthorized' })
-      }
+    if (isUnauthorized(req)) {
+      return res.status(401).json({ error: 'Unauthorized' })
     }
 
     assertPayload(req.body)
@@ -289,25 +315,7 @@ app.post(PRINTER_ROUTE, async (req, res) => {
     const cut = req.body.cut ?? AUTO_CUT
     const buffer = buildTicketBuffer(ticket, { openDrawer, cut })
 
-    const tmpDir = await ensureTmpDir()
-    const filePath = path.join(tmpDir, `ticket-${randomUUID()}.bin`)
-
-    await fs.writeFile(filePath, buffer)
-
-    logInfo('Archivo creado', {
-      filePath,
-      bytes: buffer.length,
-      openDrawer,
-      cut,
-    })
-
-    if (!DRY_RUN) {
-      await printFile(filePath)
-
-      if (!KEEP_TMP_FILES) {
-        await fs.unlink(filePath).catch(() => {})
-      }
-    }
+    await sendRawBuffer(buffer, 'ticket')
 
     res.json({ ok: true, openDrawer, cut })
   } catch (error) {
@@ -316,8 +324,33 @@ app.post(PRINTER_ROUTE, async (req, res) => {
   }
 })
 
+app.post(OPEN_DRAWER_ROUTE, async (req, res) => {
+  try {
+    if (isUnauthorized(req)) {
+      return res.status(401).json({ error: 'Unauthorized' })
+    }
+
+    const drawerPin = Number(req.body?.drawerPin ?? CASH_DRAWER_PIN)
+    if (drawerPin !== 2 && drawerPin !== 5) {
+      return res.status(400).json({ error: 'drawerPin debe ser 2 o 5' })
+    }
+
+    const buffer = buildDrawerKickBuffer(drawerPin)
+
+    await sendRawBuffer(buffer, 'drawer')
+
+    logInfo('Comando de apertura de gaveta enviado', { drawerPin, dryRun: DRY_RUN })
+
+    res.json({ ok: true, drawerPin, dryRun: DRY_RUN })
+  } catch (error) {
+    logError('Error abriendo gaveta', error)
+    res.status(500).json({ error: error.message })
+  }
+})
+
 app.listen(PORT, () => {
   logInfo('Printer bridge activo', {
-    url: `http://localhost:${PORT}${PRINTER_ROUTE}`,
+    printUrl: `http://localhost:${PORT}${PRINTER_ROUTE}`,
+    openDrawerUrl: `http://localhost:${PORT}${OPEN_DRAWER_ROUTE}`,
   })
 })
