@@ -20,6 +20,9 @@ const PRINTER_API_KEY = (process.env.PRINTER_API_KEY || '').trim()
 const PAPER_WIDTH = Math.max(24, Number(process.env.PAPER_WIDTH || 48))
 const KEEP_TMP_FILES = String(process.env.KEEP_TMP_FILES || 'false').toLowerCase() === 'true'
 const DRY_RUN = String(process.env.DRY_RUN || 'false').toLowerCase() === 'true'
+const OPEN_CASH_DRAWER = String(process.env.OPEN_CASH_DRAWER || 'true').toLowerCase() === 'true'
+const CASH_DRAWER_PIN = Number(process.env.CASH_DRAWER_PIN || 2)
+const AUTO_CUT = String(process.env.AUTO_CUT || 'true').toLowerCase() === 'true'
 const WIN_PRINT_ORDER = ["share"]
 const ALLOWED_ORIGIN = process.env.ALLOWED_ORIGIN || '*'
 
@@ -192,6 +195,34 @@ const items = Array.isArray(ticket.items) ? ticket.items : []
   return `${lines.join('\n')}\n`
 }
 
+function buildEscPosTail({ openDrawer = true, cut = true, drawerPin = CASH_DRAWER_PIN } = {}) {
+  const chunks = []
+
+  if (cut) {
+    chunks.push(Buffer.from([0x0a, 0x0a, 0x0a]))
+    chunks.push(Buffer.from([0x1d, 0x56, 0x00]))
+  }
+
+  if (openDrawer) {
+    const pin = drawerPin === 5 ? 1 : 0
+    chunks.push(Buffer.from([0x1b, 0x70, pin, 0x19, 0xfa]))
+  }
+
+  return Buffer.concat(chunks)
+}
+
+function buildTicketBuffer(ticket, options = {}) {
+  const openDrawer = options.openDrawer ?? OPEN_CASH_DRAWER
+  const cut = options.cut ?? AUTO_CUT
+  const drawerPin = options.drawerPin ?? CASH_DRAWER_PIN
+  const text = buildTicketText(ticket)
+
+  return Buffer.concat([
+    Buffer.from(text, 'utf8'),
+    buildEscPosTail({ openDrawer, cut, drawerPin }),
+  ])
+}
+
 async function ensureTmpDir() {
   const target = path.join(process.cwd(), 'tmp')
   await fs.mkdir(target, { recursive: true })
@@ -254,14 +285,21 @@ app.post(PRINTER_ROUTE, async (req, res) => {
     assertPayload(req.body)
 
     const ticket = req.body.ticket
-    const text = buildTicketText(ticket)
+    const openDrawer = req.body.openDrawer ?? OPEN_CASH_DRAWER
+    const cut = req.body.cut ?? AUTO_CUT
+    const buffer = buildTicketBuffer(ticket, { openDrawer, cut })
 
     const tmpDir = await ensureTmpDir()
-    const filePath = path.join(tmpDir, `ticket-${randomUUID()}.txt`)
+    const filePath = path.join(tmpDir, `ticket-${randomUUID()}.bin`)
 
-    await fs.writeFile(filePath, text)
+    await fs.writeFile(filePath, buffer)
 
-    logInfo('Archivo creado', { filePath })
+    logInfo('Archivo creado', {
+      filePath,
+      bytes: buffer.length,
+      openDrawer,
+      cut,
+    })
 
     if (!DRY_RUN) {
       await printFile(filePath)
@@ -271,7 +309,7 @@ app.post(PRINTER_ROUTE, async (req, res) => {
       }
     }
 
-    res.json({ ok: true })
+    res.json({ ok: true, openDrawer, cut })
   } catch (error) {
     logError('Error imprimiendo', error)
     res.status(500).json({ error: error.message })
