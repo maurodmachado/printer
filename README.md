@@ -107,3 +107,14 @@ Para probar el pin 5 (si el 2 no funciona):
 curl -X POST http://localhost:4100/open-drawer \
   -H "Content-Type: application/json" \
   -d '{"drawerPin": 5}'
+
+  curl -X POST http://localhost:4100/open-drawer \
+  -H "Content-Type: application/json" \
+  -d '{"tryAll": true}'
+Eso envía en secuencia: pin 2, pin 5, pulsos largos, pulso máximo, BEL y DLE DC4. Si ninguna abre la gaveta, el problema es casi seguro físico.
+
+También podés probar una variante puntual:
+
+curl -X POST http://localhost:4100/open-drawer \
+  -H "Content-Type: application/json" \
+  -d '{"variant": "pin2_long"}'

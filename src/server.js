@@ -196,9 +196,56 @@ const items = Array.isArray(ticket.items) ? ticket.items : []
   return `${lines.join('\n')}\n`
 }
 
-function buildDrawerKickBuffer(drawerPin = CASH_DRAWER_PIN) {
+function buildDrawerKickBuffer(drawerPin = CASH_DRAWER_PIN, timing = 'default') {
   const pin = drawerPin === 5 ? 1 : 0
-  return Buffer.from([0x1b, 0x70, pin, 0x19, 0xfa])
+  const pulses = {
+    default: [0x19, 0xfa],
+    long: [0x50, 0x50],
+    max: [0xff, 0xff],
+    short: [0x32, 0x32],
+  }
+  const [t1, t2] = pulses[timing] || pulses.default
+  return Buffer.from([0x1b, 0x70, pin, t1, t2])
+}
+
+const DRAWER_VARIANTS = {
+  pin2: () => buildDrawerKickBuffer(2, 'default'),
+  pin5: () => buildDrawerKickBuffer(5, 'default'),
+  pin2_long: () => buildDrawerKickBuffer(2, 'long'),
+  pin2_max: () => buildDrawerKickBuffer(2, 'max'),
+  pin5_long: () => buildDrawerKickBuffer(5, 'long'),
+  bel: () => Buffer.from([0x07]),
+  dle_pin2: () => Buffer.from([0x10, 0x14, 0x01, 0x00, 0x05]),
+  init_pin2: () => Buffer.concat([
+    Buffer.from([0x1b, 0x40]),
+    buildDrawerKickBuffer(2, 'long'),
+  ]),
+}
+
+function buildDrawerBuffer({ variant = 'pin2', drawerPin, tryAll = false } = {}) {
+  if (tryAll) {
+    return Buffer.concat([
+      Buffer.from([0x1b, 0x40]),
+      DRAWER_VARIANTS.pin2(),
+      DRAWER_VARIANTS.pin5(),
+      DRAWER_VARIANTS.pin2_long(),
+      DRAWER_VARIANTS.pin5_long(),
+      DRAWER_VARIANTS.pin2_max(),
+      DRAWER_VARIANTS.bel(),
+      DRAWER_VARIANTS.dle_pin2(),
+    ])
+  }
+
+  if (variant === 'auto') {
+    const pin = drawerPin ?? CASH_DRAWER_PIN
+    return buildDrawerKickBuffer(pin, 'long')
+  }
+
+  const builder = DRAWER_VARIANTS[variant]
+  if (builder) return builder()
+
+  const pin = drawerPin ?? CASH_DRAWER_PIN
+  return buildDrawerKickBuffer(pin, 'default')
 }
 
 function buildEscPosTail({ openDrawer = true, cut = true, drawerPin = CASH_DRAWER_PIN } = {}) {
@@ -210,7 +257,7 @@ function buildEscPosTail({ openDrawer = true, cut = true, drawerPin = CASH_DRAWE
   }
 
   if (openDrawer) {
-    chunks.push(buildDrawerKickBuffer(drawerPin))
+    chunks.push(buildDrawerBuffer({ variant: 'auto', drawerPin }))
   }
 
   return Buffer.concat(chunks)
@@ -330,18 +377,44 @@ app.post(OPEN_DRAWER_ROUTE, async (req, res) => {
       return res.status(401).json({ error: 'Unauthorized' })
     }
 
-    const drawerPin = Number(req.body?.drawerPin ?? CASH_DRAWER_PIN)
-    if (drawerPin !== 2 && drawerPin !== 5) {
+    const tryAll = req.body?.tryAll === true
+    const variant = tryAll ? 'all' : String(req.body?.variant || 'auto')
+    const drawerPin = req.body?.drawerPin != null
+      ? Number(req.body.drawerPin)
+      : CASH_DRAWER_PIN
+
+    if (!tryAll && variant === 'auto' && drawerPin !== 2 && drawerPin !== 5) {
       return res.status(400).json({ error: 'drawerPin debe ser 2 o 5' })
     }
 
-    const buffer = buildDrawerKickBuffer(drawerPin)
+    if (!tryAll && variant !== 'auto' && !DRAWER_VARIANTS[variant]) {
+      return res.status(400).json({
+        error: 'variant inválida',
+        variants: [...Object.keys(DRAWER_VARIANTS), 'auto', 'all'],
+      })
+    }
+
+    const buffer = buildDrawerBuffer({ variant: tryAll ? 'all' : variant, drawerPin, tryAll })
+    const hex = buffer.toString('hex')
 
     await sendRawBuffer(buffer, 'drawer')
 
-    logInfo('Comando de apertura de gaveta enviado', { drawerPin, dryRun: DRY_RUN })
+    logInfo('Comando de apertura de gaveta enviado', {
+      variant: tryAll ? 'all' : variant,
+      drawerPin,
+      bytes: buffer.length,
+      hex,
+      dryRun: DRY_RUN,
+    })
 
-    res.json({ ok: true, drawerPin, dryRun: DRY_RUN })
+    res.json({
+      ok: true,
+      variant: tryAll ? 'all' : variant,
+      drawerPin,
+      bytes: buffer.length,
+      hex,
+      dryRun: DRY_RUN,
+    })
   } catch (error) {
     logError('Error abriendo gaveta', error)
     res.status(500).json({ error: error.message })
