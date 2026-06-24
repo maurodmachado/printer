@@ -87,3 +87,23 @@ curl -X POST http://localhost:4100/print-ticket \
 - macOS/Linux: usa `lp` y hace fallback a `lpr`.
 
 Si necesitas formato ESC/POS o corte de papel, luego lo migras a una libreria especifica de tu impresora.
+
+
+Cómo probarlo
+Reiniciá el servidor y ejecutá:
+
+curl -X POST http://localhost:4100/open-drawer \
+  -H "Content-Type: application/json" \
+  -d '{}'
+Si tenés PRINTER_API_KEY configurada:
+
+curl -X POST http://localhost:4100/open-drawer \
+  -H "Content-Type: application/json" \
+  -H "x-printer-key: TU_API_KEY" \
+  -d '{}'
+Para probar el pin 5 (si el 2 no funciona):
+
+
+curl -X POST http://localhost:4100/open-drawer \
+  -H "Content-Type: application/json" \
+  -d '{"drawerPin": 5}'
