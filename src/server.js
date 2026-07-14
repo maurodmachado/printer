@@ -157,6 +157,10 @@ function buildTicketText(ticket) {
   lines.push('')
   lines.push(`Fecha: ${createdAtLabel}`)
 
+  if (ticket.cashBox?.label) {
+    lines.push(`Caja: ${ticket.cashBox.label}`)
+  }
+
   lines.push(separator)
 const items = Array.isArray(ticket.items) ? ticket.items : []
   for (const item of items) {
